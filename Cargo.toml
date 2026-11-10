@@ -8,7 +8,7 @@ license = "MIT"
 [dependencies]
 async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 gcp_auth = "0.12"
