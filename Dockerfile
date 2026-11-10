@@ -1,0 +1,38 @@
+FROM rust:1.99.1-slim@sha256:4df2ae8cfdfebdfc13a65da7f253b73d68983dc0339f2719bc17a279c913b13d AS builder
+
+ARG TARGETARCH
+
+RUN apt-get update && apt-get install -y musl-tools && rm -rf /var/lib/apt/lists/*
+
+# `ring` (TLS crypto) has C code. musl-tools only ships `musl-gcc`, which the
+# `cc` crate finds by itself on x86_64 but not on aarch64, so set it explicitly.
+ENV CC_x86_64_unknown_linux_musl=musl-gcc \
+    CC_aarch64_unknown_linux_musl=musl-gcc
+
+# Set Rust target based on Docker target architecture
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      echo "aarch64-unknown-linux-musl" > /rust-target; \
+    else \
+      echo "x86_64-unknown-linux-musl" > /rust-target; \
+    fi && \
+    rustup target add $(cat /rust-target)
+
+WORKDIR /app
+
+# Cache dependency build
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release --target $(cat /rust-target)
+RUN rm -rf src
+
+# Build the actual application
+COPY src ./src
+RUN touch src/main.rs && cargo build --release --target $(cat /rust-target) && \
+    cp target/$(cat /rust-target)/release/gcs-webhook /gcs-webhook-bin
+
+FROM scratch
+# Root CAs for TLS to storage.googleapis.com and oauth2.googleapis.com.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /gcs-webhook-bin /gcs-webhook
+USER 65534:65534
+ENTRYPOINT ["/gcs-webhook"]

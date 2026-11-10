@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # Multi-arch strategy: QEMU emulation on a single runner vs. native
+      # arm64 runners (e.g. ubuntu-24.04-arm) with a manifest-merge job.
+      # We chose QEMU because:
+      #  - It keeps the workflow to a single job with no manifest-merge step,
+      #    which is much simpler to maintain.
+      #  - Native runners would require a matrix build that pushes per-arch
+      #    digests, plus a separate job to combine them into a manifest list —
+      #    roughly tripling the YAML complexity.
+      #  - The QEMU speed penalty is acceptable here: this is a small Rust
+      #    binary (~50 crate deps) and releases are infrequent.
+      # If build times grow significantly, switch to a matrix of native
+      # runners (ubuntu-latest + ubuntu-24.04-arm) with a manifest merge job.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # Push with zstd-compressed layers (requires OCI media types).
+          # force-compression recompresses any base layers that were gzip.
+          outputs: type=image,push=true,oci-mediatypes=true,compression=zstd,compression-level=19,force-compression=true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: true
+
+      - name: Generate and upload SBOM to GitHub Release
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          upload-release-assets: true
+
+  build-binaries:
+    name: Build Binary (${{ matrix.asset_name }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset_name: gcs-webhook-linux-amd64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset_name: gcs-webhook-linux-arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install musl tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        # `ring` has C code; point the cc crate at musl-gcc (see Dockerfile).
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary
+        run: cp target/${{ matrix.target }}/release/gcs-webhook ${{ matrix.asset_name }}
+
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: ${{ matrix.asset_name }}
