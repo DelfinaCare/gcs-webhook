@@ -100,12 +100,18 @@ jobs:
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
 
+      - name: Install cargo-auditable
+        # Built from the versions locked in tools/Cargo.lock.
+        run: |
+          cargo build --release --locked --manifest-path tools/Cargo.toml -p cargo-auditable --bin cargo-auditable
+          cp tools/target/release/cargo-auditable "${CARGO_HOME:-$HOME/.cargo}/bin/"
+
       - name: Build
         # `ring` has C code; point the cc crate at musl-gcc (see Dockerfile).
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
           CC_aarch64_unknown_linux_musl: musl-gcc
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo auditable build --release --target ${{ matrix.target }}
 
       - name: Rename binary
         run: cp target/${{ matrix.target }}/release/gcs-webhook ${{ matrix.asset_name }}

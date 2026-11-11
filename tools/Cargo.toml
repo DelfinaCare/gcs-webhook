@@ -1,0 +1,16 @@
+# Not part of the application. This crate only exists so that the versions of
+# cargo-auditable and its dependencies are locked in tools/Cargo.lock, where
+# Dependabot keeps them up to date. The Dockerfile and the release workflow
+# build the cargo-auditable binary from here with `cargo build -p`. Cargo warns
+# that the dependency has no lib target; that is expected.
+[package]
+name = "tools"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cargo-auditable = "0.7"
+
+# Keep this out of any workspace the parent directory may define.
+[workspace]

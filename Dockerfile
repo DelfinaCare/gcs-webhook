@@ -17,17 +17,25 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     fi && \
     rustup target add $(cat /rust-target)
 
+# cargo-auditable embeds the dependency tree (crate names and versions) in the
+# binary, so vulnerability scanners and SBOM tools can see what was compiled
+# into it even though the final image has no package database. It is built
+# from the versions locked in tools/Cargo.lock.
+COPY tools tools
+RUN cargo build --release --locked --manifest-path tools/Cargo.toml -p cargo-auditable --bin cargo-auditable && \
+    cp tools/target/release/cargo-auditable /usr/local/cargo/bin/
+
 WORKDIR /app
 
 # Cache dependency build
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release --target $(cat /rust-target)
+RUN cargo auditable build --release --target $(cat /rust-target)
 RUN rm -rf src
 
 # Build the actual application
 COPY src ./src
-RUN touch src/main.rs && cargo build --release --target $(cat /rust-target) && \
+RUN touch src/main.rs && cargo auditable build --release --target $(cat /rust-target) && \
     cp target/$(cat /rust-target)/release/gcs-webhook /gcs-webhook-bin
 
 FROM scratch
