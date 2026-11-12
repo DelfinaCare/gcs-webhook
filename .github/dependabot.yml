@@ -5,6 +5,12 @@ updates:
     schedule:
       interval: "weekly"
 
+  # Build tools (cargo-auditable); see tools/Cargo.toml.
+  - package-ecosystem: "cargo"
+    directory: "/tools"
+    schedule:
+      interval: "weekly"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
